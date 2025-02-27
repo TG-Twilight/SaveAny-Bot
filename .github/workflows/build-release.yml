@@ -64,3 +64,24 @@ jobs:
           binary_name: saveany-bot
         env:
           VERSION: ${{ env.VERSION }}
+
+      - name: Install UPX
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install upx-ucl
+
+      - name: Compress Binary with UPX (Best Compression)
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: |
+          upx --best --ultra-brute "saveany-bot"
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            saveany-bot
+            LICENSE
+            README.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
