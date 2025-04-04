@@ -1,7 +1,9 @@
 package core
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +11,7 @@ import (
 	"time"
 
 	"github.com/celestix/gotgproto/ext"
+	"github.com/celestix/telegraph-go/v2"
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/gotd/td/telegram/message/entity"
 	"github.com/gotd/td/telegram/message/styling"
@@ -16,24 +19,38 @@ import (
 	"github.com/krau/SaveAny-Bot/bot"
 	"github.com/krau/SaveAny-Bot/common"
 	"github.com/krau/SaveAny-Bot/config"
-	"github.com/krau/SaveAny-Bot/logger"
 	"github.com/krau/SaveAny-Bot/storage"
 	"github.com/krau/SaveAny-Bot/types"
 )
 
-func saveFileWithRetry(ctx context.Context, task *types.Task, taskStorage storage.Storage, localFilePath string) error {
+func saveFileWithRetry(ctx context.Context, storagePath string, taskStorage storage.Storage, cacheFilePath string) error {
+	file, err := os.Open(cacheFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to open cache file: %w", err)
+	}
+	defer file.Close()
+	fileStat, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to get file stat: %w", err)
+	}
+	vctx := context.WithValue(ctx, types.ContextKeyContentLength, fileStat.Size())
 	for i := 0; i <= config.Cfg.Retry; i++ {
-		if err := ctx.Err(); err != nil {
+		if err := vctx.Err(); err != nil {
 			return fmt.Errorf("context canceled while saving file: %w", err)
 		}
-		if err := taskStorage.Save(ctx, localFilePath, task.StoragePath); err != nil {
+		file, err := os.Open(cacheFilePath)
+		if err != nil {
+			return fmt.Errorf("failed to open cache file: %w", err)
+		}
+		defer file.Close()
+		if err := taskStorage.Save(vctx, file, storagePath); err != nil {
 			if i == config.Cfg.Retry {
 				return fmt.Errorf("failed to save file: %w", err)
 			}
-			logger.L.Errorf("Failed to save file: %s, retrying...", err)
+			common.Log.Errorf("Failed to save file: %s, retrying...", err)
 			select {
-			case <-ctx.Done():
-				return fmt.Errorf("context canceled during retry delay: %w", ctx.Err())
+			case <-vctx.Done():
+				return fmt.Errorf("context canceled during retry delay: %w", vctx.Err())
 			case <-time.After(time.Duration(i*500) * time.Millisecond):
 			}
 			continue
@@ -43,7 +60,7 @@ func saveFileWithRetry(ctx context.Context, task *types.Task, taskStorage storag
 	return nil
 }
 
-func processPhoto(task *types.Task, taskStorage storage.Storage, cachePath string) error {
+func processPhoto(task *types.Task, taskStorage storage.Storage) error {
 	res, err := bot.Client.API().UploadGetFile(task.Ctx, &tg.UploadGetFileRequest{
 		Location: task.File.Location,
 		Offset:   0,
@@ -58,15 +75,9 @@ func processPhoto(task *types.Task, taskStorage storage.Storage, cachePath strin
 		return fmt.Errorf("unexpected type %T", res)
 	}
 
-	if err := os.WriteFile(cachePath, result.Bytes, os.ModePerm); err != nil {
-		return fmt.Errorf("failed to write file: %w", err)
-	}
+	common.Log.Infof("Downloaded photo: %s", task.FileName())
 
-	defer cleanCacheFile(cachePath)
-
-	logger.L.Infof("Downloaded file: %s", cachePath)
-
-	return saveFileWithRetry(task.Ctx, task, taskStorage, cachePath)
+	return taskStorage.Save(task.Ctx, bytes.NewReader(result.Bytes), task.StoragePath)
 }
 
 func cleanCacheFile(destPath string) {
@@ -74,7 +85,7 @@ func cleanCacheFile(destPath string) {
 		common.RmFileAfter(destPath, time.Duration(config.Cfg.Temp.CacheTTL)*time.Second)
 	} else {
 		if err := os.Remove(destPath); err != nil {
-			logger.L.Errorf("Failed to purge file: %s", err)
+			common.Log.Errorf("Failed to purge file: %s", err)
 		}
 	}
 }
@@ -120,7 +131,7 @@ func buildProgressMessageEntity(task *types.Task, bytesRead int64, startTime tim
 		styling.Plain("\n当前进度: "),
 		styling.Bold(fmt.Sprintf("%.2f%%", progress)),
 	); err != nil {
-		logger.L.Errorf("Failed to build entities: %s", err)
+		common.Log.Errorf("Failed to build entities: %s", err)
 		return text, entities
 	}
 	return entityBuilder.Complete()
@@ -129,7 +140,7 @@ func buildProgressMessageEntity(task *types.Task, bytesRead int64, startTime tim
 func buildProgressCallback(ctx *ext.Context, task *types.Task, updateCount int) func(bytesRead, contentLength int64) {
 	return func(bytesRead, contentLength int64) {
 		progress := float64(bytesRead) / float64(contentLength) * 100
-		logger.L.Tracef("Downloading %s: %.2f%%", task.String(), progress)
+		common.Log.Tracef("Downloading %s: %.2f%%", task.String(), progress)
 		progressInt := int(progress)
 		if task.File.FileSize < 1024*1024*50 || progressInt == 0 || progressInt%int(100/updateCount) != 0 {
 			return
@@ -154,7 +165,7 @@ func fixTaskFileExt(task *types.Task, localFilePath string) {
 	if path.Ext(task.FileName()) == "" {
 		mimeType, err := mimetype.DetectFile(localFilePath)
 		if err != nil {
-			logger.L.Errorf("Failed to detect mime type: %s", err)
+			common.Log.Errorf("Failed to detect mime type: %s", err)
 		} else {
 			task.File.FileName = fmt.Sprintf("%s%s", task.FileName(), mimeType.Extension())
 			task.StoragePath = fmt.Sprintf("%s%s", task.StoragePath, mimeType.Extension())
@@ -257,4 +268,28 @@ func NewProgressStream(writer io.Writer, size int64, callback func(bytesRead, co
 		nextAt:   interval,
 		interval: interval,
 	}
+}
+
+func getNodeImages(node telegraph.Node) []string {
+	var srcs []string
+
+	var nodeElement telegraph.NodeElement
+	data, err := json.Marshal(node)
+	if err != nil {
+		return srcs
+	}
+	err = json.Unmarshal(data, &nodeElement)
+	if err != nil {
+		return srcs
+	}
+
+	if nodeElement.Tag == "img" {
+		if src, exists := nodeElement.Attrs["src"]; exists {
+			srcs = append(srcs, src)
+		}
+	}
+	for _, child := range nodeElement.Children {
+		srcs = append(srcs, getNodeImages(child)...)
+	}
+	return srcs
 }

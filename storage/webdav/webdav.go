@@ -3,13 +3,13 @@ package webdav
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
-	"os"
 	"path"
 	"time"
 
-	"github.com/krau/SaveAny-Bot/config"
-	"github.com/krau/SaveAny-Bot/logger"
+	"github.com/krau/SaveAny-Bot/common"
+	config "github.com/krau/SaveAny-Bot/config/storage"
 	"github.com/krau/SaveAny-Bot/types"
 )
 
@@ -41,26 +41,19 @@ func (w *Webdav) Name() string {
 	return w.config.Name
 }
 
-func (w *Webdav) Save(ctx context.Context, filePath, storagePath string) error {
-	logger.L.Infof("Saving file %s to %s", filePath, storagePath)
+func (w *Webdav) JoinStoragePath(task types.Task) string {
+	return path.Join(w.config.BasePath, task.StoragePath)
+}
+
+func (w *Webdav) Save(ctx context.Context, r io.Reader, storagePath string) error {
+	common.Log.Infof("Saving file to %s", storagePath)
 	if err := w.client.MkDir(ctx, path.Dir(storagePath)); err != nil {
-		logger.L.Errorf("Failed to create directory %s: %v", path.Dir(storagePath), err)
+		common.Log.Errorf("Failed to create directory %s: %v", path.Dir(storagePath), err)
 		return ErrFailedToCreateDirectory
 	}
-	file, err := os.Open(filePath)
-	if err != nil {
-		logger.L.Errorf("Failed to open file %s: %v", filePath, err)
-		return err
-	}
-	defer file.Close()
-
-	if err := w.client.WriteFile(ctx, storagePath, file); err != nil {
-		logger.L.Errorf("Failed to write file %s: %v", storagePath, err)
+	if err := w.client.WriteFile(ctx, storagePath, r); err != nil {
+		common.Log.Errorf("Failed to write file %s: %v", storagePath, err)
 		return ErrFailedToWriteFile
 	}
 	return nil
-}
-
-func (w *Webdav) JoinStoragePath(task types.Task) string {
-	return path.Join(w.config.BasePath, task.StoragePath)
 }

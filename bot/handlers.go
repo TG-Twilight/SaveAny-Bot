@@ -4,7 +4,7 @@ import (
 	"github.com/celestix/gotgproto/dispatcher"
 	"github.com/celestix/gotgproto/dispatcher/handlers"
 	"github.com/celestix/gotgproto/dispatcher/handlers/filters"
-	"github.com/krau/SaveAny-Bot/logger"
+	"github.com/krau/SaveAny-Bot/common"
 )
 
 func RegisterHandlers(dispatcher dispatcher.Dispatcher) {
@@ -17,9 +17,14 @@ func RegisterHandlers(dispatcher dispatcher.Dispatcher) {
 	dispatcher.AddHandler(handlers.NewCommand("dir", dirCmd))
 	linkRegexFilter, err := filters.Message.Regex(linkRegexString)
 	if err != nil {
-		logger.L.Panicf("创建正则表达式过滤器失败: %s", err)
+		common.Log.Panicf("创建正则表达式过滤器失败: %s", err)
 	}
 	dispatcher.AddHandler(handlers.NewMessage(linkRegexFilter, handleLinkMessage))
+	telegraphUrlRegexFilter, err := filters.Message.Regex(TelegraphUrlRegexString)
+	if err != nil {
+		common.Log.Panicf("创建 Telegraph URL 正则表达式过滤器失败: %s", err)
+	}
+	dispatcher.AddHandler(handlers.NewMessage(telegraphUrlRegexFilter, handleTelegraph))
 	dispatcher.AddHandler(handlers.NewCallbackQuery(filters.CallbackQuery.Prefix("add"), AddToQueue))
 	dispatcher.AddHandler(handlers.NewCallbackQuery(filters.CallbackQuery.Prefix("set_default"), setDefaultStorage))
 	dispatcher.AddHandler(handlers.NewCallbackQuery(filters.CallbackQuery.Prefix("cancel"), cancelTask))

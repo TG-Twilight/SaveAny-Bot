@@ -1,15 +1,17 @@
 package bot
 
 import (
+	"fmt"
+
 	"github.com/celestix/gotgproto/dispatcher"
 	"github.com/celestix/gotgproto/ext"
+	"github.com/krau/SaveAny-Bot/common"
 	"github.com/krau/SaveAny-Bot/dao"
-	"github.com/krau/SaveAny-Bot/logger"
 )
 
 func start(ctx *ext.Context, update *ext.Update) error {
 	if err := dao.CreateUser(update.GetUserChat().GetID()); err != nil {
-		logger.L.Errorf("创建用户失败: %s", err)
+		common.Log.Errorf("创建用户失败: %s", err)
 		return dispatcher.EndGroups
 	}
 	return help(ctx, update)
@@ -17,6 +19,7 @@ func start(ctx *ext.Context, update *ext.Update) error {
 
 const helpText string = `
 Save Any Bot - 转存你的 Telegram 文件
+版本: %s , 提交: %s
 命令:
 /start - 开始使用
 /help - 显示帮助
@@ -32,6 +35,6 @@ Save Any Bot - 转存你的 Telegram 文件
 `
 
 func help(ctx *ext.Context, update *ext.Update) error {
-	ctx.Reply(update, ext.ReplyTextString(helpText), nil)
+	ctx.Reply(update, ext.ReplyTextString(fmt.Sprintf(helpText, common.Version, common.GitCommit[:7])), nil)
 	return dispatcher.EndGroups
 }

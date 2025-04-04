@@ -13,9 +13,9 @@ import (
 	"github.com/gotd/td/telegram/message/entity"
 	"github.com/gotd/td/telegram/message/styling"
 	"github.com/gotd/td/tg"
+	"github.com/krau/SaveAny-Bot/common"
 	"github.com/krau/SaveAny-Bot/config"
 	"github.com/krau/SaveAny-Bot/dao"
-	"github.com/krau/SaveAny-Bot/logger"
 	"github.com/krau/SaveAny-Bot/queue"
 	"github.com/krau/SaveAny-Bot/types"
 	"gorm.io/gorm"
@@ -33,11 +33,11 @@ func AddToQueue(ctx *ext.Context, update *ext.Update) error {
 		return dispatcher.EndGroups
 	}
 	args := strings.Split(string(update.CallbackQuery.Data), " ")
-	addToDir := args[0] == "add_to_dir"
+	addToDir := args[0] == "add_to_dir" // 已经选择了路径
 	cbDataId, _ := strconv.Atoi(args[1])
 	cbData, err := dao.GetCallbackData(uint(cbDataId))
 	if err != nil {
-		logger.L.Errorf("获取回调数据失败: %s", err)
+		common.Log.Errorf("获取回调数据失败: %s", err)
 		ctx.AnswerCallback(&tg.MessagesSetBotCallbackAnswerRequest{
 			QueryID:   update.CallbackQuery.QueryID,
 			Alert:     true,
@@ -56,7 +56,7 @@ func AddToQueue(ctx *ext.Context, update *ext.Update) error {
 
 	user, err := dao.GetUserByChatID(update.CallbackQuery.UserID)
 	if err != nil {
-		logger.L.Errorf("获取用户失败: %s", err)
+		common.Log.Errorf("获取用户失败: %s", err)
 		ctx.AnswerCallback(&tg.MessagesSetBotCallbackAnswerRequest{
 			QueryID:   update.CallbackQuery.QueryID,
 			Alert:     true,
@@ -69,7 +69,7 @@ func AddToQueue(ctx *ext.Context, update *ext.Update) error {
 	if !addToDir {
 		dirs, err := dao.GetDirsByUserIDAndStorageName(user.ID, storageName)
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			logger.L.Errorf("获取路径失败: %s", err)
+			common.Log.Errorf("获取路径失败: %s", err)
 			ctx.AnswerCallback(&tg.MessagesSetBotCallbackAnswerRequest{
 				QueryID:   update.CallbackQuery.QueryID,
 				Alert:     true,
@@ -81,7 +81,7 @@ func AddToQueue(ctx *ext.Context, update *ext.Update) error {
 		if len(dirs) != 0 {
 			markup, err := getSelectDirMarkup(fileChatID, fileMessageID, storageName, dirs)
 			if err != nil {
-				logger.L.Errorf("获取路径失败: %s", err)
+				common.Log.Errorf("获取路径失败: %s", err)
 				ctx.AnswerCallback(&tg.MessagesSetBotCallbackAnswerRequest{
 					QueryID:   update.CallbackQuery.QueryID,
 					Alert:     true,
@@ -96,16 +96,16 @@ func AddToQueue(ctx *ext.Context, update *ext.Update) error {
 				ReplyMarkup: markup,
 			})
 			if err != nil {
-				logger.L.Errorf("编辑消息失败: %s", err)
+				common.Log.Errorf("编辑消息失败: %s", err)
 			}
 			return dispatcher.EndGroups
 		}
 	}
 
-	logger.L.Tracef("Got add to queue: chatID: %d, messageID: %d, storage: %s", fileChatID, fileMessageID, storageName)
+	common.Log.Tracef("Got add to queue: chatID: %d, messageID: %d, storage: %s", fileChatID, fileMessageID, storageName)
 	record, err := dao.GetReceivedFileByChatAndMessageID(int64(fileChatID), fileMessageID)
 	if err != nil {
-		logger.L.Errorf("获取记录失败: %s", err)
+		common.Log.Errorf("获取记录失败: %s", err)
 		ctx.AnswerCallback(&tg.MessagesSetBotCallbackAnswerRequest{
 			QueryID:   update.CallbackQuery.QueryID,
 			Alert:     true,
@@ -117,7 +117,7 @@ func AddToQueue(ctx *ext.Context, update *ext.Update) error {
 	if update.CallbackQuery.MsgID != record.ReplyMessageID {
 		record.ReplyMessageID = update.CallbackQuery.MsgID
 		if err := dao.SaveReceivedFile(record); err != nil {
-			logger.L.Errorf("更新接收的文件失败: %s", err)
+			common.Log.Errorf("更新接收的文件失败: %s", err)
 		}
 	}
 
@@ -125,7 +125,7 @@ func AddToQueue(ctx *ext.Context, update *ext.Update) error {
 	if addToDir && dirId != 0 {
 		dir, err = dao.GetDirByID(dirId)
 		if err != nil {
-			logger.L.Errorf("获取路径失败: %s", err)
+			common.Log.Errorf("获取路径失败: %s", err)
 			ctx.AnswerCallback(&tg.MessagesSetBotCallbackAnswerRequest{
 				QueryID:   update.CallbackQuery.QueryID,
 				Alert:     true,
@@ -136,31 +136,50 @@ func AddToQueue(ctx *ext.Context, update *ext.Update) error {
 		}
 	}
 
-	file, err := FileFromMessage(ctx, record.ChatID, record.MessageID, record.FileName)
-	if err != nil {
-		logger.L.Errorf("获取消息中的文件失败: %s", err)
-		ctx.AnswerCallback(&tg.MessagesSetBotCallbackAnswerRequest{
-			QueryID:   update.CallbackQuery.QueryID,
-			Alert:     true,
-			Message:   fmt.Sprintf("获取消息中的文件失败: %s", err),
-			CacheTime: 5,
-		})
-		return dispatcher.EndGroups
-	}
+	var task types.Task
+	if record.IsTelegraph {
+		task = types.Task{
+			Ctx:            ctx,
+			Status:         types.Pending,
+			IsTelegraph:    true,
+			TelegraphURL:   record.TelegraphURL,
+			StorageName:    storageName,
+			FileChatID:     record.ChatID,
+			FileMessageID:  record.MessageID,
+			ReplyMessageID: record.ReplyMessageID,
+			ReplyChatID:    record.ReplyChatID,
+			UserID:         update.GetUserChat().GetID(),
+		}
+		if dir != nil {
+			task.StoragePath = path.Join(dir.Path, record.FileName)
+		}
+	} else {
+		file, err := FileFromMessage(ctx, record.ChatID, record.MessageID, record.FileName)
+		if err != nil {
+			common.Log.Errorf("获取消息中的文件失败: %s", err)
+			ctx.AnswerCallback(&tg.MessagesSetBotCallbackAnswerRequest{
+				QueryID:   update.CallbackQuery.QueryID,
+				Alert:     true,
+				Message:   fmt.Sprintf("获取消息中的文件失败: %s", err),
+				CacheTime: 5,
+			})
+			return dispatcher.EndGroups
+		}
 
-	task := types.Task{
-		Ctx:            ctx,
-		Status:         types.Pending,
-		File:           file,
-		StorageName:    storageName,
-		FileChatID:     record.ChatID,
-		ReplyMessageID: record.ReplyMessageID,
-		FileMessageID:  record.MessageID,
-		ReplyChatID:    record.ReplyChatID,
-		UserID:         update.GetUserChat().GetID(),
-	}
-	if dir != nil {
-		task.StoragePath = path.Join(dir.Path, file.FileName)
+		task = types.Task{
+			Ctx:            ctx,
+			Status:         types.Pending,
+			File:           file,
+			StorageName:    storageName,
+			FileChatID:     record.ChatID,
+			ReplyMessageID: record.ReplyMessageID,
+			FileMessageID:  record.MessageID,
+			ReplyChatID:    record.ReplyChatID,
+			UserID:         update.GetUserChat().GetID(),
+		}
+		if dir != nil {
+			task.StoragePath = path.Join(dir.Path, file.FileName)
+		}
 	}
 
 	queue.AddTask(&task)
@@ -174,7 +193,7 @@ func AddToQueue(ctx *ext.Context, update *ext.Update) error {
 		styling.Plain("\n当前排队任务数: "),
 		styling.Bold(strconv.Itoa(queue.Len())),
 	); err != nil {
-		logger.L.Errorf("Failed to build entity: %s", err)
+		common.Log.Errorf("Failed to build entity: %s", err)
 	} else {
 		text, entities = entityBuilder.Complete()
 	}

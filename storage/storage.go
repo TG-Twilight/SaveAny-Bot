@@ -5,26 +5,27 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/krau/SaveAny-Bot/common"
 	"github.com/krau/SaveAny-Bot/config"
-	"github.com/krau/SaveAny-Bot/logger"
+	sc "github.com/krau/SaveAny-Bot/config/storage"
 	"github.com/krau/SaveAny-Bot/storage/alist"
 	"github.com/krau/SaveAny-Bot/storage/local"
-	"github.com/krau/SaveAny-Bot/storage/webdav"
 	"github.com/krau/SaveAny-Bot/storage/minio"
+	"github.com/krau/SaveAny-Bot/storage/webdav"
 	"github.com/krau/SaveAny-Bot/types"
 )
 
 type Storage interface {
-	Init(cfg config.StorageConfig) error
+	Init(cfg sc.StorageConfig) error
 	Type() types.StorageType
 	Name() string
 	JoinStoragePath(task types.Task) string
-	Save(cttx context.Context, localFilePath, storagePath string) error
+	Save(ctx context.Context, reader io.Reader, storagePath string) error
 }
 
-type StreamStorage interface {
+type StorageNotSupportStream interface {
 	Storage
-	NewUploadStream(ctx context.Context, path string) (io.WriteCloser, error)
+	NotSupportStream() string
 }
 
 var Storages = make(map[string]Storage)
@@ -94,7 +95,7 @@ var storageConstructors = map[string]StorageConstructor{
 	string(types.StorageTypeMinio):  func() Storage { return new(minio.Minio) },
 }
 
-func NewStorage(cfg config.StorageConfig) (Storage, error) {
+func NewStorage(cfg sc.StorageConfig) (Storage, error) {
 	constructor, ok := storageConstructors[string(cfg.GetType())]
 	if !ok {
 		return nil, fmt.Errorf("不支持的存储类型: %s", cfg.GetType())
@@ -109,14 +110,14 @@ func NewStorage(cfg config.StorageConfig) (Storage, error) {
 }
 
 func LoadStorages() {
-	logger.L.Info("加载存储...")
+	common.Log.Info("加载存储...")
 	for _, storage := range config.Cfg.Storages {
 		_, err := GetStorageByName(storage.GetName())
 		if err != nil {
-			logger.L.Errorf("加载存储 %s 失败: %v", storage.GetName(), err)
+			common.Log.Errorf("加载存储 %s 失败: %v", storage.GetName(), err)
 		}
 	}
-	logger.L.Infof("成功加载 %d 个存储", len(Storages))
+	common.Log.Infof("成功加载 %d 个存储", len(Storages))
 	for user := range config.Cfg.GetUsersID() {
 		UserStorages[int64(user)] = GetUserStorages(int64(user))
 	}

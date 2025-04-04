@@ -24,7 +24,7 @@ func initCache() {
 	Cache = &CommonCache{cache: freecache.NewCache(10 * 1024 * 1024)}
 }
 
-func (c *CommonCache) Get(key string, value *types.File) error {
+func (c *CommonCache) Get(key string, value any) error {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	data, err := Cache.cache.Get([]byte(key))
@@ -39,7 +39,7 @@ func (c *CommonCache) Get(key string, value *types.File) error {
 	return nil
 }
 
-func (c *CommonCache) Set(key string, value *types.File, expireSeconds int) error {
+func (c *CommonCache) Set(key string, value any, expireSeconds int) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var buf bytes.Buffer
