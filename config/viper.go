@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/duke-git/lancet/v2/slice"
 	"github.com/krau/SaveAny-Bot/config/storage"
 	"github.com/spf13/viper"
 )
@@ -37,13 +38,15 @@ type logConfig struct {
 }
 
 type dbConfig struct {
-	Path string `toml:"path" mapstructure:"path"`
+	Path   string `toml:"path" mapstructure:"path"`
+	Expire int64  `toml:"expire" mapstructure:"expire"`
 }
 
 type telegramConfig struct {
 	Token   string      `toml:"token" mapstructure:"token"`
 	AppID   int         `toml:"app_id" mapstructure:"app_id" json:"app_id"`
 	AppHash string      `toml:"app_hash" mapstructure:"app_hash" json:"app_hash"`
+	Timeout int         `toml:"timeout" mapstructure:"timeout" json:"timeout"`
 	Proxy   proxyConfig `toml:"proxy" mapstructure:"proxy"`
 
 	// Deprecated
@@ -82,6 +85,7 @@ func Init() error {
 
 	viper.SetDefault("telegram.app_id", 1025907)
 	viper.SetDefault("telegram.app_hash", "452b0359b988148995f22ff0f4229750")
+	viper.SetDefault("telegram.timeout", 60)
 
 	viper.SetDefault("temp.base_path", "cache/")
 	viper.SetDefault("temp.cache_ttl", 3600)
@@ -91,6 +95,7 @@ func Init() error {
 	viper.SetDefault("log.backup_count", 7)
 
 	viper.SetDefault("db.path", "data/saveany.db")
+	viper.SetDefault("db.expire", 86400*5)
 
 	if err := viper.SafeWriteConfigAs("config.toml"); err != nil {
 		if _, ok := err.(viper.ConfigFileAlreadyExistsError); !ok {
@@ -132,6 +137,19 @@ func Init() error {
 	if Cfg.Workers < 1 || Cfg.Retry < 1 {
 		return fmt.Errorf("workers 和 retry 必须大于 0, 当前值: workers=%d, retry=%d", Cfg.Workers, Cfg.Retry)
 	}
+
+	for _, storage := range Cfg.Storages {
+		storages = append(storages, storage.GetName())
+	}
+	for _, user := range Cfg.Users {
+		userIDs = append(userIDs, user.ID)
+		if user.Blacklist {
+			userStorages[user.ID] = slice.Compact(slice.Difference(storages, user.Storages))
+		} else {
+			userStorages[user.ID] = user.Storages
+		}
+	}
+
 
 	return nil
 }
