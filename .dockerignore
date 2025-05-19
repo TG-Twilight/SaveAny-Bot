@@ -1,0 +1,11 @@
+*.md
+.git
+.github/
+.gitignore
+.vscode/
+downloads/
+data/
+cache/
+docs
+config.example.toml
+docker-compose.*

@@ -3,7 +3,6 @@ package bot
 import (
 	"context"
 	"net/url"
-	"os"
 	"time"
 
 	"github.com/celestix/gotgproto"
@@ -56,10 +55,11 @@ func Init() {
 			config.Cfg.Telegram.AppHash,
 			gotgproto.ClientTypeBot(config.Cfg.Telegram.Token),
 			&gotgproto.ClientOpts{
-				Session:          sessionMaker.SqlSession(sqlite.Open("data/session.db")),
+				Session:          sessionMaker.SqlSession(sqlite.Open(config.Cfg.DB.Session)),
 				DisableCopyright: true,
 				Middlewares:      FloodWaitMiddleware(),
 				Resolver:         resolver,
+				MaxRetries:       config.Cfg.Telegram.RpcRetry,
 			},
 		)
 		if err != nil {
@@ -89,12 +89,10 @@ func Init() {
 
 	select {
 	case <-ctx.Done():
-		common.Log.Fatal("初始化客户端失败: 超时")
-		os.Exit(1)
+		common.Log.Panic("初始化客户端失败: 超时")
 	case result := <-resultChan:
 		if result.err != nil {
-			common.Log.Fatalf("初始化客户端失败: %s", result.err)
-			os.Exit(1)
+			common.Log.Panicf("初始化客户端失败: %s", result.err)
 		}
 		Client = result.client
 		RegisterHandlers(Client.Dispatcher)
